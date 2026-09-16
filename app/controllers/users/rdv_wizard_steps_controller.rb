@@ -2,10 +2,11 @@ class Users::RdvWizardStepsController < UserAuthController
   layout "application_base"
 
   RDV_PERMITTED_PARAMS = [:starts_at, :motif_id, :context, { user_ids: [] }].freeze
+
   EXTRA_PERMITTED_PARAMS = [
     *WebSearchContext::ADDRESS_SELECTION_PARAMS,
     :lieu_id, :where, :rdv_collectif_id, :user_selected_organisation_id,
-    :public_link_organisation_id, :duration, :ants_pre_demandes_count,
+    :public_link_organisation_id, :preselected_motif, :duration, :ants_pre_demandes_count,
     { organisation_ids: [], referent_ids: [], external_organisation_ids: [] },
   ].freeze
 
@@ -38,10 +39,12 @@ class Users::RdvWizardStepsController < UserAuthController
 
     authorize(@rdv_booking_form, policy_class: User::RdvBookingPolicy)
 
+    UserAmiProfile.update_notify_by_ami(current_user, params.dig(:user, :notify_by_ami).to_boolean)
     if @rdv_booking_form.save
       flash[:success] = (@rdv_booking_form.collectif? ? "Participation confirmée" : t("users.rdvs.create.rdv_confirmed"))
-      set_user_name_initials_verified
-      redirect_to users_rdv_path(@rdv_booking_form.rdv, invitation_token: @rdv_booking_form.invitation_token)
+
+      RestrictedAuthSessionState.allow_access_to_rdv!(session, rdv_id: @rdv_booking_form.rdv.id)
+      redirect_to users_rdv_path(@rdv_booking_form.rdv)
     else
       flash[:error] = "Une erreur a empêché la confirmation de votre RDV"
       render :new
@@ -65,7 +68,7 @@ class Users::RdvWizardStepsController < UserAuthController
   # - l'usager est invité (c'est lui qui est concerné)
   # - l'usager est connecté via ProConnect (professionnel)
   def set_skip_proches_step
-    @skip_proches_step = current_user.signed_in_with_invitation_token? || current_user.pro_connect_openid_sub
+    @skip_proches_step = current_user.signed_in_with_restricted_auth_token? || current_user.pro_connect_openid_sub
   end
 
   def rdv_params
@@ -95,7 +98,7 @@ class Users::RdvWizardStepsController < UserAuthController
       { user_profiles_attributes: %i[logement id organisation_id] },
       { relatives_attributes: %i[id first_name last_name birth_date ants_pre_demande_number] },
     ]
-    keys << :email if current_user.email_editable?
+    keys << :email if current_user.can_change_email_without_confirmation?
     keys
   end
 

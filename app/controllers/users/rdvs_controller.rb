@@ -1,5 +1,5 @@
 class Users::RdvsController < UserAuthController
-  before_action :verify_user_name_initials, :set_rdv, :set_can_see_rdv_motif, only: %i[show creneaux ics edit cancel update]
+  before_action :set_rdv, :set_can_see_rdv_motif, only: %i[show creneaux ics edit cancel update visio]
   before_action :set_can_see_rdv_motif, only: %i[show edit index]
   before_action :build_creneau, :redirect_if_creneau_not_available, only: %i[edit update]
 
@@ -8,7 +8,7 @@ class Users::RdvsController < UserAuthController
 
   include RestrictedAuthConcern
 
-  prepend_before_action :store_restricted_auth_token_in_session_and_redirect, only: %i[show creneaux]
+  prepend_before_action :store_restricted_auth_token_in_session_and_redirect, only: %i[show creneaux visio]
 
   def index
     authorize(Rdv, policy_class: User::RdvPolicy)
@@ -34,7 +34,7 @@ class Users::RdvsController < UserAuthController
       Notifiers::RdvUpdated.new(@rdv, current_user, old_agent_ids: old_agent_ids).perform
 
       flash[:success] = "Votre RDV a bien été modifié"
-      redirect_to users_rdv_path(@rdv, invitation_token: current_user.participation_for(@rdv).restricted_auth_token)
+      redirect_to users_rdv_path(@rdv)
     else
       flash[:error] = "Le RDV n'a pas pu être modifié"
       redirect_to creneaux_users_rdv_path(@rdv)
@@ -48,8 +48,7 @@ class Users::RdvsController < UserAuthController
     else
       flash[:error] = "Impossible d'annuler le RDV."
     end
-    restricted_auth_token = current_user.participation_for(@rdv).restricted_auth_token
-    redirect_to users_rdv_path(@rdv, invitation_token: restricted_auth_token)
+    redirect_to users_rdv_path(@rdv)
   end
 
   def ics
@@ -59,6 +58,15 @@ class Users::RdvsController < UserAuthController
               filename: payload[:attachement_filename],
               type: "text/calendar",
               disposition: "attachment"
+  end
+
+  def visio
+    if @rdv.visio_url.present?
+      redirect_to @rdv.visio_url, allow_other_host: true
+    else
+      flash[:error] = "Ce RDV n'a pas de visioconférence associée"
+      redirect_to users_rdv_path(@rdv)
+    end
   end
 
   def creneaux
@@ -106,7 +114,7 @@ class Users::RdvsController < UserAuthController
   end
 
   def set_can_see_rdv_motif
-    @can_see_rdv_motif = !current_user.signed_in_with_invitation_token?
+    @can_see_rdv_motif = !current_user.signed_in_with_restricted_auth_token?
   end
 
   def redirect_if_creneau_not_available

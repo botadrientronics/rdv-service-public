@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.0].define(version: 2026_08_24_085938) do
+ActiveRecord::Schema[8.0].define(version: 2026_09_08_153024) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
   enable_extension "pg_stat_statements"
@@ -64,9 +64,8 @@ ActiveRecord::Schema[8.0].define(version: 2026_08_24_085938) do
     t.bigint "organisation_id", null: false
     t.enum "access_level", default: "basic", null: false, enum_type: "access_level"
     t.boolean "agent_accueil", default: false, null: false
-    t.index ["access_level"], name: "index_agent_roles_on_access_level"
-    t.index ["agent_id"], name: "index_agent_roles_on_agent_id"
-    t.index ["organisation_id", "agent_id"], name: "index_agent_roles_on_organisation_id_and_agent_id", unique: true
+    t.index ["agent_id", "organisation_id"], name: "index_agent_roles_on_agent_id_and_organisation_id", unique: true, include: ["access_level", "agent_accueil"]
+    t.index ["organisation_id"], name: "index_agent_roles_on_organisation_id"
   end
 
   create_table "agent_services", force: :cascade do |t|
@@ -103,6 +102,17 @@ ActiveRecord::Schema[8.0].define(version: 2026_08_24_085938) do
     t.bigint "territory_id", null: false
     t.index ["agent_id", "territory_id"], name: "index_agent_territorial_roles_unique_agent_territory", unique: true
     t.index ["territory_id"], name: "index_agent_territorial_roles_on_territory_id"
+  end
+
+  create_table "agent_trusted_devices", force: :cascade do |t|
+    t.bigint "agent_id", null: false
+    t.string "token_digest", null: false
+    t.datetime "expires_at", null: false
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["agent_id"], name: "index_agent_trusted_devices_on_agent_id"
+    t.index ["expires_at"], name: "index_agent_trusted_devices_on_expires_at"
+    t.index ["token_digest"], name: "index_agent_trusted_devices_on_token_digest", unique: true
   end
 
   create_table "agents", force: :cascade do |t|
@@ -187,14 +197,6 @@ ActiveRecord::Schema[8.0].define(version: 2026_08_24_085938) do
     t.index ["rdv_id"], name: "index_agents_rdvs_on_rdv_id"
   end
 
-  create_table "ami_france_connect_hashes", force: :cascade do |t|
-    t.string "fc_hash", null: false
-    t.bigint "user_id", null: false
-    t.datetime "created_at", null: false
-    t.datetime "updated_at", null: false
-    t.index ["user_id"], name: "index_ami_france_connect_hashes_on_user_id", unique: true
-  end
-
   create_table "annotations", force: :cascade do |t|
     t.bigint "user_id", null: false
     t.bigint "territory_id", null: false
@@ -233,6 +235,8 @@ ActiveRecord::Schema[8.0].define(version: 2026_08_24_085938) do
     t.boolean "caldav_include_sensitive_data", default: false, null: false
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
+    t.string "caldav_calendar_name"
+    t.string "caldav_calendar_color", limit: 7
     t.index ["agent_id"], name: "index_caldav_configs_on_agent_id", unique: true
   end
 
@@ -266,6 +270,22 @@ ActiveRecord::Schema[8.0].define(version: 2026_08_24_085938) do
     t.text "raw_ical"
     t.index ["agent_id", "starts_at"], name: "index_external_calendar_events_on_agent_id_and_starts_at"
     t.index ["agent_id", "url"], name: "index_external_calendar_events_on_agent_id_and_url", unique: true
+  end
+
+  create_table "external_calendar_sync_execution_logs", force: :cascade do |t|
+    t.bigint "external_calendar_sync_execution_id", null: false
+    t.text "message", null: false
+    t.datetime "emitted_at", null: false
+    t.index ["external_calendar_sync_execution_id"], name: "idx_on_external_calendar_sync_execution_id_59fda23095"
+  end
+
+  create_table "external_calendar_sync_executions", force: :cascade do |t|
+    t.bigint "agent_id", null: false
+    t.string "calendar_url", null: false
+    t.boolean "successful"
+    t.datetime "started_at", null: false
+    t.datetime "ended_at"
+    t.index ["agent_id", "calendar_url"], name: "idx_on_cal_sync_executions_agent_id_calendar_url"
   end
 
   create_table "external_references", force: :cascade do |t|
@@ -641,6 +661,23 @@ ActiveRecord::Schema[8.0].define(version: 2026_08_24_085938) do
     t.index ["token"], name: "index_prescripteurs_on_token", where: "(token IS NOT NULL)"
   end
 
+  create_table "rdv_invitations", force: :cascade do |t|
+    t.string "token", null: false
+    t.bigint "user_id", null: false
+    t.bigint "motif_id", null: false
+    t.bigint "lieu_id"
+    t.bigint "inviting_agent_id", null: false
+    t.bigint "rdv_id"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["inviting_agent_id"], name: "index_rdv_invitations_on_inviting_agent_id"
+    t.index ["lieu_id"], name: "index_rdv_invitations_on_lieu_id"
+    t.index ["motif_id"], name: "index_rdv_invitations_on_motif_id"
+    t.index ["rdv_id"], name: "index_rdv_invitations_on_rdv_id"
+    t.index ["token"], name: "index_rdv_invitations_on_token", unique: true
+    t.index ["user_id"], name: "index_rdv_invitations_on_user_id"
+  end
+
   create_table "rdv_plans", force: :cascade do |t|
     t.bigint "planning_agent_id", comment: "L'id de l'agent qui planifie le rdv"
     t.bigint "rdv_id"
@@ -841,6 +878,15 @@ ActiveRecord::Schema[8.0].define(version: 2026_08_24_085938) do
     t.index ["territory_id"], name: "index_territory_tags_on_territory_id"
   end
 
+  create_table "user_ami_profiles", force: :cascade do |t|
+    t.bigint "user_id", null: false
+    t.string "fc_hash", null: false
+    t.boolean "notify_by_ami", default: false, null: false
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["user_id"], name: "index_user_ami_profiles_on_user_id", unique: true
+  end
+
   create_table "user_profiles", force: :cascade do |t|
     t.bigint "organisation_id", null: false
     t.bigint "user_id", null: false
@@ -943,9 +989,9 @@ ActiveRecord::Schema[8.0].define(version: 2026_08_24_085938) do
   add_foreign_key "agent_territorial_access_rights", "territories"
   add_foreign_key "agent_territorial_roles", "agents"
   add_foreign_key "agent_territorial_roles", "territories"
+  add_foreign_key "agent_trusted_devices", "agents"
   add_foreign_key "agents_rdvs", "agents"
   add_foreign_key "agents_rdvs", "rdvs"
-  add_foreign_key "ami_france_connect_hashes", "users"
   add_foreign_key "annotations", "territories"
   add_foreign_key "annotations", "users"
   add_foreign_key "api_calls", "agents"
@@ -953,6 +999,8 @@ ActiveRecord::Schema[8.0].define(version: 2026_08_24_085938) do
   add_foreign_key "export_file_blobs", "exports"
   add_foreign_key "exports", "agents"
   add_foreign_key "external_calendar_events", "agents"
+  add_foreign_key "external_calendar_sync_execution_logs", "external_calendar_sync_executions"
+  add_foreign_key "external_calendar_sync_executions", "agents"
   add_foreign_key "external_references", "oauth_applications"
   add_foreign_key "external_references", "territories"
   add_foreign_key "file_attentes", "rdvs"
@@ -977,6 +1025,11 @@ ActiveRecord::Schema[8.0].define(version: 2026_08_24_085938) do
   add_foreign_key "plage_ouvertures", "agents"
   add_foreign_key "plage_ouvertures", "lieux"
   add_foreign_key "plage_ouvertures", "organisations"
+  add_foreign_key "rdv_invitations", "agents", column: "inviting_agent_id"
+  add_foreign_key "rdv_invitations", "lieux"
+  add_foreign_key "rdv_invitations", "motifs"
+  add_foreign_key "rdv_invitations", "rdvs"
+  add_foreign_key "rdv_invitations", "users"
   add_foreign_key "rdv_plans", "agents", column: "planning_agent_id"
   add_foreign_key "rdv_plans", "agents", column: "rdv_agent_id"
   add_foreign_key "rdv_plans", "lieux"
@@ -1002,6 +1055,7 @@ ActiveRecord::Schema[8.0].define(version: 2026_08_24_085938) do
   add_foreign_key "territory_services", "territories"
   add_foreign_key "territory_tags", "tags"
   add_foreign_key "territory_tags", "territories"
+  add_foreign_key "user_ami_profiles", "users"
   add_foreign_key "user_profiles", "organisations"
   add_foreign_key "user_profiles", "users"
   add_foreign_key "users", "users", column: "responsible_id"

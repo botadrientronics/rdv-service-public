@@ -82,6 +82,7 @@ Rails.application.routes.draw do
     # pour éviter les 404 lors d’un refresh après un premier post qui a rendu :new
     get :rdv_wizard_step, to: redirect(path: "/users/rdv_wizard_step/new")
     post :rdvs, to: redirect(status: 303) { |_params, request| "/users/rdv_wizard_step/new?#{request.query_string}" } # TODO: supprimer après le 03/08/2026
+    # show, creneaux et visio sont rate limités par IP quand invitation_token est présent (voir config/initializers/rack_attack.rb)
     resources :rdvs, only: %i[index show edit update] do
       resources :participations, only: %i[index create]
       put "participations/cancel", to: "participations#cancel"
@@ -89,6 +90,7 @@ Rails.application.routes.draw do
         get :creneaux
         get :ics
         put :cancel
+        get :visio
       end
     end
 
@@ -97,6 +99,8 @@ Rails.application.routes.draw do
     get :user_name_initials_verification, to: redirect(path: "/users/user_name_initials_verification/new")
 
     post "file_attente", to: "file_attentes#create_or_delete"
+
+    # Rate limité par IP (voir config/initializers/rack_attack.rb)
     get "file_attente/unsubscribe/:token", to: "file_attentes#unsubscribe", as: "unsubscribe_file_attente"
 
     resource :sessions_by_code, only: %i[new create], controller: "sessions_by_code" do
@@ -119,6 +123,9 @@ Rails.application.routes.draw do
   authenticate :user do
     get "/users/informations", to: "users/users#edit"
     patch "users/informations", to: "users/users#update"
+    resource :email_change_request, only: %i[new create], controller: "users/email_change_requests", path: "users/email_change"
+    resource :email_change_confirmation, only: %i[new create], controller: "users/email_change_confirmations", path: "users/email_change/confirmation"
+    get "users/email_change/confirmation", to: "users/email_change_confirmations#new"
     resources :relatives, except: %i[index show], controller: "users/relatives"
   end
 
@@ -146,27 +153,38 @@ Rails.application.routes.draw do
       resource :sessions_by_code, only: %i[new create], controller: "sessions_by_code" do
         post :resend, on: :collection
       end
+      resource :pro_connect_step_up, only: %i[new create], controller: "pro_connect_step_up"
       resource :preferences, only: %i[show update]
       resource :calendar_sync, only: %i[show], controller: :calendar_sync do
         resource :caldav_sync, only: %i[show update destroy], controller: :caldav_sync do
           post :calendar_selection
         end
+        resources :logs, only: %i[index], controller: :external_calendar_sync_executions
         resource :webcal_sync, only: %i[show update], controller: :webcal_sync
         resource :outlook_sync, only: %i[show destroy], controller: :outlook_sync
       end
-      resources :rdvs, only: %i[show]
+
+      resources :rdvs, only: %i[show] do
+        member do
+          get :visio
+        end
+      end
+
       resources :rdv_plans, only: %i[show] do
         member do
+          get :edit_motif
+          patch :update_motif
+
           patch :update_agent
 
           get :edit_starts_at
           patch :update_starts_at
 
-          get :edit_modalites
-          patch :update_modalites
+          get :edit_starts_at_and_duration
+          patch :update_starts_at_and_duration
 
-          get :edit_motif
-          patch :update_motif
+          get :edit_lieu
+          patch :update_lieu
 
           get :edit_user
           post :create_rdv
@@ -319,6 +337,13 @@ Rails.application.routes.draw do
           get :a_renseigner
         end
       end
+
+      resources :rdv_invitations, only: %i[new create show] do
+        member do
+          get :show_confirmation
+        end
+      end
+
       scope module: "organisations" do
         resource :online_booking, only: %i[show edit update] do
           member do
@@ -431,6 +456,7 @@ Rails.application.routes.draw do
   get "r", to: redirect("users/rdvs", status: 301), as: "rdvs_short"
 
   # tkn est obligatoire pour s'assurer qu'il est possible de se connecter
+  # Rate limité par IP (voir config/initializers/rack_attack.rb)
   get "r/:tkn" => "redirect#rdv_short_from_token", as: "rdv_short_from_token"
 
   get "r/:id/cr", to: (redirect do |path_params, req|
@@ -440,10 +466,17 @@ Rails.application.routes.draw do
 
   # << REMOVE AFTER 01/01/2027
   # On préserve la route courte avec id pour la rétrocompatibilité des anciens SMS
+  # Rate limité par IP (voir config/initializers/rack_attack.rb)
   get "r/:id/:tkn" => "redirect#rdv_short", as: "rdv_short"
   # >> REMOVE AFTER 01/01/2027
 
+  # Rate limité par IP (voir config/initializers/rack_attack.rb)
   get "prdv", to: "redirect#reprendre_rdv_from_participation_invitation_token", as: "reprendre_rdv_from_participation_invitation_token_short"
+
+  get "invit/:rdv_invitation_token", to: "rdv_invitations#show", as: "rdv_invitations"
+
+  # Ça devrait être un post, mais ça compliquerait beaucoup la logique de CreneauWizardForUsers::Steps::CreneauSelection#wizard_after_creneau_selection_path
+  get "invit/:rdv_invitation_token/prendre_rdv", to: "rdv_invitations#create_rdv", as: "rdv_invitations_create_rdv"
 
   def format_redirect_params(params)
     # we rename the short parameter tkn
@@ -479,6 +512,7 @@ Rails.application.routes.draw do
 
   root "search#home"
 
+  # Rate limité par IP quand invitation_token est présent (voir config/initializers/rack_attack.rb)
   get "/prendre_rdv", to: "search#search_rdv"
 
   # temporary route after admin namespace introduction

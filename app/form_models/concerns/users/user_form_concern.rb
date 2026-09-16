@@ -13,16 +13,16 @@ module Users::UserFormConcern
              :caisse_affiliation, :affiliation_number, :logement,
              :notify_by_email, :notify_by_sms,
              :connected_with_sso?, :pro_connect_openid_sub,
-             :logged_once_with_franceconnect?, :signed_in_with_invitation_token?,
+             :logged_once_with_franceconnect?, :signed_in_with_restricted_auth_token?,
              :errors, :errors_are_all_benign?, :benign_errors, :not_benign_errors,
-             :ants_pre_demande_number, :already_logged_in?, :email_editable?,
+             :ants_pre_demande_number, :already_logged_in?, :can_change_email_without_confirmation?, :can_change_email?,
              to: :user
 
     def self.human_attribute_name(...) = User.human_attribute_name(...)
   end
 
   def show_birth_name_field?
-    !signed_in_with_invitation_token? && !domain.rdv_service_public? && !pro_connect_openid_sub
+    !signed_in_with_restricted_auth_token? && !domain.rdv_service_public? && !pro_connect_openid_sub
   end
 
   def birth_name_frozen? = connected_with_sso?

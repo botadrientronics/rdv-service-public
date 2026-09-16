@@ -4,8 +4,9 @@ class SearchController < ApplicationController
   include RestrictedAuthConcern
   include Search::LogParamsConcern
 
-  prepend_before_action(only: %i[search_rdv]) do
-    store_restricted_auth_token_in_session_and_redirect(store_rdv_insertion_invitation: true)
+  # Peut être utilisé soit pour une invitation de RDV insertion ou pour une invitation à reprendre rendez-vous suite à une annulation
+  prepend_before_action only: %i[search_rdv] do
+    store_restricted_auth_token_in_session_and_redirect(allow_rdv_insertion_invitation: true)
   end
 
   def home
@@ -36,7 +37,7 @@ class SearchController < ApplicationController
     elsif current_agent && params[:prescripteur] == Prescripteur::INTERNE && params[:current_organisation]
       redirect_to search_creneau_admin_organisation_prescription_path(params[:current_organisation], agent_search_params)
     else
-      @context = if invitation_to_take_rdv?
+      @context = if rdv_insertion_invitation_query_params.present?
                    WebInvitationSearchContext.new(user: current_user, query_params: search_params.merge(rdv_insertion_invitation_query_params))
                  else
                    WebSearchContext.new(user: current_user, query_params: search_params)
@@ -111,6 +112,11 @@ class SearchController < ApplicationController
 
   private
 
+  # Les clés du hash renvoyé par cette méthode devraient correspondre à InvitationSearchContext::INVITATION_PARAMS
+  def rdv_insertion_invitation_query_params
+    session[:rdv_insertion_invitation]&.symbolize_keys
+  end
+
   def search_on_migrated_organisation
     return false unless current_domain == Domain::RDV_AIDE_NUMERIQUE && params[:public_link_organisation_id]
 
@@ -134,7 +140,7 @@ class SearchController < ApplicationController
       redirect_to prendre_rdv_path({
         public_link_organisation_id: organisation.id,
         departement: organisation.territory.departement_number,
-        motif_id: motif&.id,
+        preselected_motif: motif&.public_link_id,
         prescripteur:,
       }.compact)
     else
@@ -146,6 +152,7 @@ class SearchController < ApplicationController
   def search_allowed?
     current_domain.provides_address_selection? || # toujours autorisé sur RDVS
       (@current_step != :address_selection && params[:public_link_organisation_id].present?) || # toujours scopé sur RDVSP
+      (@current_step != :address_selection && params[:referent_ids].present?) || # RDV de suivi : recherche scopée aux agents référents de l'usager
       exception_for_cdad_21?
   end
 
@@ -161,7 +168,7 @@ class SearchController < ApplicationController
     params.permit(
       *WebSearchContext::ADDRESS_SELECTION_PARAMS,
       *WebSearchContext::USER_CHOICE_PARAMS,
-      :motif_category_short_name, :date, :public_link_organisation_id, :prescripteur,
+      :motif_category_short_name, :date, :public_link_organisation_id, :prescripteur, :preselected_motif,
       organisation_ids: [], referent_ids: [], external_organisation_ids: []
     ).to_h.deep_symbolize_keys
   end

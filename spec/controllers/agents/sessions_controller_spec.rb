@@ -51,11 +51,69 @@ RSpec.describe Agents::SessionsController do
           .and have_enqueued_mail(Agents::LoginCodeMailer, :login_code)
         expect(LoginCode.last.email).to eq(agent.email)
       end
+
+      context "et que l'appareil est de confiance" do
+        before { AgentTrustedDevice.remember_by_cookie!(agent, cookies) }
+
+        it "connecte l'agent directement, sans redemander de code" do
+          post :create, params: { agent: { email: agent.email, password: "c0rrecThorse!" } }
+          expect(controller.current_agent).to eq(agent)
+        end
+
+        it "ne crée pas de nouveau code de connexion" do
+          expect { post :create, params: { agent: { email: agent.email, password: "c0rrecThorse!" } } }
+            .not_to change(LoginCode, :count)
+        end
+
+        it "reste vrai pour un autre agent ayant aussi mémorisé cet appareil (poste partagé)" do
+          other_agent = create(:agent, password: "c0rrecThorse!", sensitive_account: true)
+          AgentTrustedDevice.remember_by_cookie!(other_agent, cookies)
+
+          post :create, params: { agent: { email: agent.email, password: "c0rrecThorse!" } }
+          expect(controller.current_agent).to eq(agent)
+        end
+      end
+
+      context "et que seul un autre agent a mémorisé cet appareil" do
+        before do
+          other_agent = create(:agent, password: "c0rrecThorse!", sensitive_account: true)
+          AgentTrustedDevice.remember_by_cookie!(other_agent, cookies)
+        end
+
+        it "redemande un code de connexion" do
+          post :create, params: { agent: { email: agent.email, password: "c0rrecThorse!" } }
+          expect(response).to redirect_to(new_agents_sessions_by_code_path)
+        end
+      end
     end
   end
 
   describe "#destroy" do
     before { sign_in agent }
+
+    it "vide la session dans son intégralité" do
+      session[:some_unrelated_key] = "devrait disparaître"
+      get :destroy
+      expect(session[:some_unrelated_key]).to be_nil
+    end
+
+    context "quand l'agent est usurpé par un super admin" do
+      let(:super_admin) { create(:super_admin) }
+
+      before do
+        sign_in super_admin, scope: :super_admin
+        session[:super_admin_signed_in_as_agent] = true
+        session[:some_unrelated_key] = "devrait survivre"
+      end
+
+      it "ne déconnecte pas le super admin et laisse le reste de la session intact" do
+        get :destroy
+
+        expect(session["warden.user.super_admin.key"]).to be_present
+        expect(session[:some_unrelated_key]).to eq("devrait survivre")
+        expect(response).to redirect_to(super_admins_agents_path)
+      end
+    end
 
     context "when the agent was logged in with ProConnect" do
       stub_env_with(PRO_CONNECT_BASE_URL: "https://fca.integ01.dev-agentconnect.fr/api/v2")
