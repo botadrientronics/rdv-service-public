@@ -18,13 +18,17 @@ class SynchronizeCrmPageJob < ApplicationJob
   def perform(notion_page_id:, account_url:, notion_page_url:, notion_page_title:)
     return unless ENV["NOTION_API_SECRET"]
 
-    ids = organisations_ids(account_url, notion_page_url, notion_page_title)
-    return if ids.blank?
+    organisations = organisations_scope(account_url, notion_page_url, notion_page_title)
+    return if organisations.nil?
 
-    territory = Organisation.find(ids.first).territory
-    last_rdv = Rdv.where(organisation: ids).order(created_at: :desc).first
+    first_organisation = organisations.first
+    return if first_organisation.nil?
+
+    territory = first_organisation.territory
+    rdvs = Rdv.where(organisation: organisations)
+    last_rdv = rdvs.order(created_at: :desc).first
     properties = {
-      "NOMBRE DE RDV" => Rdv.where(organisation: ids).count,
+      "NOMBRE DE RDV" => rdvs.count,
       "DATE CREATION DERNIER RDV" => last_rdv ? { start: last_rdv.created_at.strftime("%Y-%m-%d") } : nil,
       "DATE CREATION ESPACE" => { start: territory.created_at.strftime("%Y-%m-%d") },
       "NOMBRE AGENTS ACTIFS" => territory.organisations_agents.where("last_sign_in_at >= ?", 30.days.ago).count,
@@ -34,13 +38,17 @@ class SynchronizeCrmPageJob < ApplicationJob
 
   private
 
-  def organisations_ids(account_url, notion_page_url, notion_page_title)
+  # Retourne une relation ActiveRecord d'organisations (sous-requête SQL),
+  # ou nil si l'URL du compte PROD est invalide
+  def organisations_scope(account_url, notion_page_url, notion_page_title)
     if account_url.match('territories/(\d+)')
       territory_id = account_url.match('territories/(\d+)')[1]
       territory = Territory.find_by(id: territory_id)
-      Organisation.where(territory: territory).pluck(:id)
+      return nil if territory.nil?
+
+      Organisation.where(territory: territory)
     elsif account_url.match('organisations/(\d+)')
-      Organisation.where(id: account_url.match('organisations/(\d+)')[1]).pluck(:id)
+      Organisation.where(id: account_url.match('organisations/(\d+)')[1])
     else
       MattermostApiClient.send_message(
         channel: "startup-rdv-alertes-crm",
@@ -48,7 +56,7 @@ class SynchronizeCrmPageJob < ApplicationJob
         username: "CRM",
         icon_url: "https://upload.wikimedia.org/wikipedia/commons/thumb/e/e9/Notion-logo.svg/100px-Notion-logo.svg.png"
       )
-      []
+      nil
     end
   end
 
